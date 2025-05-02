@@ -1,0 +1,19 @@
+version: '3'
+
+services:
+  slack-status-updater:
+    build: .
+    container_name: slack-status-updater
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=Asia/Manila  # Change this to your timezone
+    networks:
+      - slack-network
+
+networks:
+  slack-network:
+    driver: bridge

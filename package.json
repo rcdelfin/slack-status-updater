@@ -1,0 +1,26 @@
+{
+  "name": "slackstatusupdater",
+  "version": "1.0.0",
+  "description": "Automatically update Slack status based on work schedule, breaks, and holidays",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "build": "bun build src/index.ts --outdir=dist",
+    "test": "bun test"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@slack/web-api": "^6.8.1",
+    "cron": "^2.4.0",
+    "date-fns": "^2.30.0",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5.0.0"
+  }
+}
