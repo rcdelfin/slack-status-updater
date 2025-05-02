@@ -11,6 +11,7 @@ const slackClient = new WebClient(slackToken);
 
 // Configuration
 const config = {
+  workDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
   workHours: { start: '08:00', end: '16:00' },
   lunchBreak: { start: '12:00', end: '13:00' },
   shortBreaks: [
@@ -30,10 +31,25 @@ const config = {
 
 // Emojis for different statuses with daily rotation options
 const emojis = {
-  active: [':computer:', ':desktop_computer:', ':technologist:', ':nerd_face:'],
-  away: [':x:', ':door:'],
-  lunch: [':sandwich:', ':pizza:', ':hamburger:', ':ramen:', ':bento:', ':curry:', ':sushi:'],
-  shortBreak: [':coffee:', ':tea:', ':walking:', ':brain:']
+  active: [
+    ":working-from-home:",
+    ":computer:",
+    ":desktop_computer:",
+    ":technologist:",
+    ":workinprogress:",
+    ":nerd_face:",
+  ],
+  away: [":x:", ":door:"],
+  lunch: [
+    ":sandwich:",
+    ":pizza:",
+    ":hamburger:",
+    ":ramen:",
+    ":bento:",
+    ":curry:",
+    ":sushi:",
+  ],
+  shortBreak: [":coffee:", ":tea:", ":walking:", ":brain:"],
 };
 
 /**
@@ -42,9 +58,8 @@ const emojis = {
  * @returns {string} A random emoji from the specified category
  */
 function getDailyEmoji(category) {
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const seed = today.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const index = seed % emojis[category].length;
+  // Select a random emoji from the category
+  const index = Math.floor(Math.random() * emojis[category].length);
   return emojis[category][index];
 }
 
@@ -137,6 +152,51 @@ function isDuringLunch() {
 }
 
 /**
+ * Convert workDays array to cron expression format
+ * @returns {string} - Cron expression for work days (e.g., "1,2,3,4,5" for Monday-Friday)
+ */
+function getWorkDaysCronExpression() {
+  const dayMap = {
+    'Sunday': 0,
+    'Monday': 1,
+    'Tuesday': 2,
+    'Wednesday': 3,
+    'Thursday': 4,
+    'Friday': 5,
+    'Saturday': 6
+  };
+  
+  const cronDays = config.workDays
+    .map(day => dayMap[day])
+    .sort((a, b) => a - b)
+    .join(',');
+    
+  return cronDays;
+}
+
+/**
+ * Get non-work days in cron expression format
+ * @returns {string} - Cron expression for non-work days
+ */
+function getNonWorkDaysCronExpression() {
+  const dayMap = {
+    'Sunday': 0,
+    'Monday': 1,
+    'Tuesday': 2,
+    'Wednesday': 3,
+    'Thursday': 4,
+    'Friday': 5,
+    'Saturday': 6
+  };
+  
+  const allDays = [0, 1, 2, 3, 4, 5, 6];
+  const workDayNumbers = config.workDays.map(day => dayMap[day]);
+  const nonWorkDays = allDays.filter(day => !workDayNumbers.includes(day));
+  
+  return nonWorkDays.sort().join(',');
+}
+
+/**
  * Initial status check and setup when the script starts
  */
 async function initialStatusCheck() {
@@ -161,32 +221,35 @@ async function initialStatusCheck() {
 // Run initial status check when the script starts
 initialStatusCheck();
 
-// Schedule start of workday status update (weekdays)
-schedule('0 9 * * 1-5', async () => {
+// Get the work days in cron format
+const workDaysCron = getWorkDaysCronExpression();
+
+// Schedule start of workday status update (work days)
+schedule(`0 9 * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now)) {
     await updateSlackStatus('Active', getDailyEmoji('active'));
   }
 });
 
-// Schedule end of workday status update (weekdays)
-schedule('0 17 * * 1-5', async () => {
+// Schedule end of workday status update (work days)
+schedule(`0 17 * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now)) {
     await updateSlackStatus('Away', getDailyEmoji('away'));
   }
 });
 
-// Schedule lunch break status update (weekdays)
-schedule('0 12 * * 1-5', async () => {
+// Schedule lunch break status update (work days)
+schedule(`0 12 * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now) && !isWeekend(now)) {
     await updateSlackStatus('Lunch Break', getDailyEmoji('lunch'), 60);
   }
 });
 
-// Schedule return from lunch status update (weekdays)
-schedule('0 13 * * 1-5', async () => {
+// Schedule return from lunch status update (work days)
+schedule(`0 13 * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now) && !isWeekend(now)) {
     await updateSlackStatus('Active', getDailyEmoji('active'));
@@ -196,7 +259,7 @@ schedule('0 13 * * 1-5', async () => {
 // Schedule short breaks
 config.shortBreaks.forEach((breakInfo) => {
   const [hour, minute] = breakInfo.time.split(':');
-  schedule(`${minute} ${hour} * * 1-5`, async () => {
+  schedule(`${minute} ${hour} * * ${workDaysCron}`, async () => {
     const now = new Date();
     if (!isHoliday(now) && !isVacation(now) && !isWeekend(now)) {
       await updateSlackStatus('Short Break', getDailyEmoji('shortBreak'), breakInfo.duration);
@@ -209,7 +272,7 @@ config.shortBreaks.forEach((breakInfo) => {
   const returnHour = returnFromBreak.getHours();
   const returnMinute = returnFromBreak.getMinutes();
   
-  schedule(`${returnMinute} ${returnHour} * * 1-5`, async () => {
+  schedule(`${returnMinute} ${returnHour} * * ${workDaysCron}`, async () => {
     const now = new Date();
     if (!isHoliday(now) && !isVacation(now) && !isWeekend(now)) {
       await updateSlackStatus('Active', getDailyEmoji('active'));
@@ -217,8 +280,9 @@ config.shortBreaks.forEach((breakInfo) => {
   });
 });
 
-// Set weekend status at midnight on Saturday and Sunday
-schedule('0 0 * * 0,6', async () => {
+// Set status for non-work days at midnight
+const nonWorkDaysCron = getNonWorkDaysCronExpression();
+schedule(`0 0 * * ${nonWorkDaysCron}`, async () => {
   await updateSlackStatus('Away', getDailyEmoji('away'));
 });
 
