@@ -10,12 +10,13 @@ A Bun.js background task that automatically updates your Slack status based on y
 - Sets status to "Away" on weekends and holidays
 - Recognizes holidays and vacation periods
 - Daily emoji rotation (same emoji throughout the day, changes daily)
+- **Support for multiple Slack workspaces**
 
 ## Prerequisites
 
 - [Bun](https://bun.sh/) installed (for local development)
 - [Docker](https://www.docker.com/) installed (for containerized deployment)
-- Slack API token with appropriate scopes (`users.profile:write`, `users:write`)
+- Slack API token with appropriate scopes (`users.profile:write`, `users:write`) for each workspace
 
 ## Installation
 
@@ -28,18 +29,30 @@ A Bun.js background task that automatically updates your Slack status based on y
 bun install
 ```
 
-3. Edit the `.env` file and add your Slack API token:
+3. Edit the `.env` file and add your Slack API tokens:
 
 ```
+# For single workspace
 SLACK_TOKEN=xoxp-your-slack-token-here
+
+# For multiple workspaces
+SLACK_TOKEN=xoxp-your-primary-workspace-token
+SLACK_TOKEN_WORKSPACE2=xoxp-your-second-workspace-token
+SLACK_TOKEN_WORKSPACE3=xoxp-your-third-workspace-token
 ```
 
 ### Docker Setup
 
-1. Create a `.env` file with your Slack token:
+1. Create a `.env` file with your Slack tokens:
 
 ```
+# For single workspace
 SLACK_TOKEN=xoxp-your-slack-token-here
+
+# For multiple workspaces
+SLACK_TOKEN=xoxp-your-primary-workspace-token
+SLACK_TOKEN_WORKSPACE2=xoxp-your-second-workspace-token
+SLACK_TOKEN_WORKSPACE3=xoxp-your-third-workspace-token
 ```
 
 2. Use Docker Compose to build and run the container:
@@ -52,8 +65,9 @@ This will build the Docker image and start the container in detached mode, runni
 
 ## Configuration
 
-You can customize the app by modifying the configuration in `src/index.ts`:
+You can customize the app by modifying the configuration in `config.js`:
 
+- `workspaces`: Configure multiple Slack workspaces
 - `workHours`: Set your regular work hours
 - `lunchBreak`: Set your lunch break time
 - `shortBreaks`: Configure short breaks throughout the day
@@ -61,10 +75,34 @@ You can customize the app by modifying the configuration in `src/index.ts`:
 - `vacationPeriods`: Define vacation periods
 - `emojis`: Customize emojis for each status type
 
+### Multiple Workspaces Configuration
+
+To configure multiple workspaces, edit the `workspaces` array in `config.js`:
+
+```javascript
+workspaces: [
+  {
+    name: "Primary Workspace",
+    tokenEnvKey: "SLACK_TOKEN" // Name of environment variable with the token
+  },
+  {
+    name: "Secondary Workspace",
+    tokenEnvKey: "SLACK_TOKEN_WORKSPACE2"
+  },
+  // Add more workspaces as needed
+]
+```
+
+Each workspace requires:
+- A unique name for identification in logs
+- A `tokenEnvKey` that points to an environment variable containing the Slack token
+
 In the docker-compose.yml file, make sure to set the correct timezone:
 ```yaml
 environment:
   - TZ=Asia/Manila  # Change this to your timezone
+  - SLACK_TOKEN=your-token-here
+  - SLACK_TOKEN_WORKSPACE2=your-second-token-here
 ```
 
 ## Running the App

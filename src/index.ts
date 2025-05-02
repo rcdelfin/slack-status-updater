@@ -2,60 +2,33 @@ import { WebClient } from '@slack/web-api';
 import { schedule } from 'node-cron';
 import { format, isWeekend, isToday, parseISO, addMinutes } from 'date-fns';
 import dotenv from 'dotenv';
+import config from '../config.js';
 
 // Load environment variables
 dotenv.config();
 
-const slackToken = process.env.SLACK_TOKEN;
-const slackClient = new WebClient(slackToken);
+// Setup Slack clients for each workspace
+const slackClients = config.workspaces.map(workspace => {
+  const token = process.env[workspace.tokenEnvKey];
+  if (!token) {
+    console.warn(`Warning: No token found for workspace "${workspace.name}" (${workspace.tokenEnvKey})`);
+    return null;
+  }
+  return {
+    name: workspace.name,
+    client: new WebClient(token)
+  };
+}).filter(client => client !== null);
 
-// Configuration
-const config = {
-  workDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-  outOfOffice: [
-    // {'time': '09:00', 'duration': 60},
-    // {'hour': {start: '17:00', end: '18:00'}},
-    {days: ['Saturday', 'Sunday']},
-  ],
-  workHours: { start: '08:00', end: '16:00' },
-  lunchBreak: { start: '12:00', end: '13:00' },
-  shortBreaks: [
-    { time: '10:30', duration: 15 },
-    { time: '15:00', duration: 15 }
-  ],
-  holidays: [
-    '2025-01-01', // New Year's Day
-    '2025-09-01', // Labor Day
-    '2025-12-25', // Christmas
-  ],
-  // Add your vacation periods here
-  vacationPeriods: [
-    { start: '2025-12-24', end: '2025-12-31' }, // Example vacation
-  ]
-};
+if (slackClients.length === 0) {
+  console.error('Error: No valid Slack tokens found. Please check your environment variables.');
+  process.exit(1);
+} else {
+  console.log(`Initialized ${slackClients.length} Slack workspace connections`);
+}
 
-// Emojis for different statuses with daily rotation options
-const emojis = {
-  active: [
-    ":working-from-home:",
-    ":computer:",
-    ":desktop_computer:",
-    ":technologist:",
-    ":workinprogress:",
-    ":nerd_face:",
-  ],
-  away: [":x:", ":door:"],
-  lunch: [
-    ":sandwich:",
-    ":pizza:",
-    ":hamburger:",
-    ":ramen:",
-    ":bento:",
-    ":curry:",
-    ":sushi:",
-  ],
-  shortBreak: [":coffee:", ":tea:", ":walking:", ":brain:"],
-};
+// Emojis from config file
+const emojis = config.emojis;
 
 /**
  * Get a random emoji from a category that changes daily but remains consistent throughout the day
@@ -88,16 +61,22 @@ async function updateSlackStatus(statusText, emoji, expirationMinutes = 0, setAw
       profile.status_expiration = expirationTime;
     }
     
-    await slackClient.users.profile.set({
-      profile: JSON.stringify(profile),
-    });
-    
-    // Set user presence to away or auto
-    await slackClient.users.setPresence({
-      presence: setAway ? 'away' : 'auto'
-    });
-    
-    console.log(`[${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}] Slack status updated to: ${statusText} ${emoji}${expirationMinutes > 0 ? ` (expires in ${expirationMinutes} minutes)` : ''} (Presence: ${setAway ? 'away' : 'auto'})`);
+    for (const workspace of slackClients) {
+      try {
+        await workspace.client.users.profile.set({
+          profile: JSON.stringify(profile),
+        });
+        
+        // Set user presence to away or auto
+        await workspace.client.users.setPresence({
+          presence: setAway ? 'away' : 'auto'
+        });
+        
+        console.log(`[${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}] Slack status updated for workspace "${workspace.name}" to: ${statusText} ${emoji}${expirationMinutes > 0 ? ` (expires in ${expirationMinutes} minutes)` : ''} (Presence: ${setAway ? 'away' : 'auto'})`);
+      } catch (workspaceError) {
+        console.error(`Error updating status for workspace "${workspace.name}":`, workspaceError);
+      }
+    }
   } catch (error) {
     console.error('Error updating Slack status:', error);
   }
