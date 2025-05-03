@@ -31,6 +31,18 @@ if (slackClients.length === 0) {
 const emojis = config.emojis;
 
 /**
+ * Get the appropriate status message based on the status type
+ * @param {string} statusType - The type of status (active, away, lunch, etc.)
+ * @param {string} defaultMessage - Default message if no custom message is found
+ * @returns {string} The status message to display
+ */
+function getStatusMessage(statusType, defaultMessage) {
+  return config.statusMessages && config.statusMessages[statusType] 
+    ? config.statusMessages[statusType] 
+    : defaultMessage;
+}
+
+/**
  * Get a random emoji from a category that changes daily but remains consistent throughout the day
  * @param {string} category - The emoji category to choose from
  * @returns {string} A random emoji from the specified category
@@ -61,18 +73,27 @@ async function updateSlackStatus(statusText, emoji, expirationMinutes = 0, setAw
       profile.status_expiration = expirationTime;
     }
     
+    // Check if we're in debug mode
+    const debugMode = process.env.DEBUG?.toLowerCase() === 'true';
+    
     for (const workspace of slackClients) {
       try {
-        await workspace.client.users.profile.set({
-          profile: JSON.stringify(profile),
-        });
+        // Only send actual updates to Slack if not in debug mode
+        if (!debugMode) {
+          await workspace.client.users.profile.set({
+            profile: JSON.stringify(profile),
+          });
+          
+          // Set user presence to away or auto
+          await workspace.client.users.setPresence({
+            presence: setAway ? 'away' : 'auto'
+          });
+        }
         
-        // Set user presence to away or auto
-        await workspace.client.users.setPresence({
-          presence: setAway ? 'away' : 'auto'
-        });
-        
-        console.log(`[${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}] Slack status updated for workspace "${workspace.name}" to: ${statusText} ${emoji}${expirationMinutes > 0 ? ` (expires in ${expirationMinutes} minutes)` : ''} (Presence: ${setAway ? 'away' : 'auto'})`);
+        // Always log the action
+        console.log(
+          `[${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}] ${debugMode ? '[DEBUG - NOT SENT] ' : ''}Slack status updated for workspace "${workspace.name}" to: ${statusText} ${emoji}${expirationMinutes > 0 ? ` (expires in ${expirationMinutes} minutes)` : ''} (Presence: ${setAway ? 'away' : 'auto'})`
+        );
       } catch (workspaceError) {
         console.error(`Error updating status for workspace "${workspace.name}":`, workspaceError);
       }
@@ -85,10 +106,21 @@ async function updateSlackStatus(statusText, emoji, expirationMinutes = 0, setAw
 /**
  * Check if the current date is a holiday
  * @param {Date} date - The date to check
+ * @returns {Object|null} - Holiday object if it's a holiday, null otherwise
+ */
+function getHoliday(date) {
+  const currentDate = format(date, 'yyyy-MM-dd');
+  const holiday = config.holidays.find(h => h.day === currentDate);
+  return holiday || null;
+}
+
+/**
+ * Check if the current date is a holiday
+ * @param {Date} date - The date to check
  * @returns {boolean} - True if it's a holiday
  */
 function isHoliday(date) {
-  return config.holidays.includes(format(date, 'yyyy-MM-dd'));
+  return getHoliday(date) !== null;
 }
 
 /**
@@ -142,20 +174,34 @@ function isDuringLunch() {
 }
 
 /**
- * Check if the current time is in an out of office period
+ * Check if a specific time is in an out of office period
+ * @param {Object} options - Configuration options
+ * @param {Date} [options.date] - The date to check (defaults to current date)
+ * @param {string} [options.time] - The specific time to check in HH:MM format (overrides time from date if provided)
+ * @param {string} [options.day] - The specific day to check (defaults to day from provided date)
  * @returns {boolean} - True if it's during an out of office period
  */
-function isOutOfOffice() {
-  const now = new Date();
-  const currentDay = format(now, 'EEEE'); // Gets the full day name (Monday, Tuesday, etc.)
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
-  const currentTime = currentHour * 60 + currentMinute;
+function isOutOfOffice(options: { date?: Date; time?: string; day?: string } = {}) {
+  const now = options.date || new Date();
+  const day = options.day || format(now, 'EEEE'); // Gets the full day name (Monday, Tuesday, etc.)
   
-  // Check if current day is in any of the out of office day configurations
+  // Calculate time in minutes
+  let currentTime;
+  if (options.time) {
+    // If specific time provided, use it
+    const [hour, minute] = options.time.split(':').map(Number);
+    currentTime = hour * 60 + minute;
+  } else {
+    // Otherwise use time from date object
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    currentTime = currentHour * 60 + currentMinute;
+  }
+  
+  // Check if current day and time is in any of the out of office day configurations
   for (const oooConfig of config.outOfOffice) {
     // Check day-specific out of office
-    if (oooConfig.days && oooConfig.days.includes(currentDay)) {
+    if (oooConfig.day && oooConfig.day === day) {
       return true;
     }
     
@@ -237,20 +283,80 @@ function getNonWorkDaysCronExpression() {
  */
 async function initialStatusCheck() {
   const now = new Date();
-  
-  if (isWeekend(now) || isHoliday(now) || isVacation(now) || isOutOfOffice()) {
-    await updateSlackStatus('Away', getDailyEmoji('away'), 0, true);
+  const currentDay = format(now, "EEEE"); // Gets the full day name (Monday, Tuesday, etc.)
+
+  // Check for out of office periods
+  if (isOutOfOffice()) {
+    // Find the applicable OOO configuration to get the message
+    const oooConfig = config.outOfOffice.find(
+      (ooo) => ooo.day && ooo.day === currentDay
+    );
+    const message =
+      oooConfig && oooConfig.message
+        ? oooConfig.message
+        : getStatusMessage("away", "Away");
+    await updateSlackStatus(message, getDailyEmoji("away"), 0, true);
     return;
   }
-  
+
+  // Check for holiday
+  const holiday = getHoliday(now);
+  if (holiday) {
+    await updateSlackStatus(
+      getStatusMessage("holiday", holiday.message || "On Holiday"),
+      getDailyEmoji("away"),
+      0,
+      true
+    );
+    return;
+  }
+
+  // Check for vacation
+  if (isVacation(now)) {
+    await updateSlackStatus(
+      getStatusMessage("vacation", "On Vacation"),
+      getDailyEmoji("away"),
+      0,
+      true
+    );
+    return;
+  }
+
+  // Check for weekend
+  if (isWeekend(now)) {
+    await updateSlackStatus(
+      getStatusMessage("weekend", "Weekend Mode"),
+      getDailyEmoji("away"),
+      0,
+      true
+    );
+    return;
+  }
+
+  // Regular work day checks
   if (isDuringWorkHours()) {
     if (isDuringLunch()) {
-      await updateSlackStatus('Lunch Break', getDailyEmoji('lunch'), 60, false);
+      await updateSlackStatus(
+        getStatusMessage("lunch", "Lunch Break"),
+        getDailyEmoji("lunch"),
+        60,
+        false
+      );
     } else {
-      await updateSlackStatus('Active', getDailyEmoji('active'), 0, false);
+      await updateSlackStatus(
+        getStatusMessage("active", "Active"),
+        getDailyEmoji("active"),
+        0,
+        false
+      );
     }
   } else {
-    await updateSlackStatus('Away', getDailyEmoji('away'), 0, true);
+    await updateSlackStatus(
+      getStatusMessage("away", "Away"),
+      getDailyEmoji("away"),
+      0,
+      true
+    );
   }
 }
 
@@ -264,9 +370,9 @@ const workDaysCron = getWorkDaysCronExpression();
 schedule(`0 9 * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now) && !isOutOfOffice()) {
-    await updateSlackStatus('Active', getDailyEmoji('active'), 0, false);
+    await updateSlackStatus(getStatusMessage('active', 'Active'), getDailyEmoji('active'), 0, false);
   } else {
-    await updateSlackStatus('Away', getDailyEmoji('away'), 0, true);
+    await updateSlackStatus(getStatusMessage('away', 'Away'), getDailyEmoji('away'), 0, true);
   }
 });
 
@@ -274,7 +380,7 @@ schedule(`0 9 * * ${workDaysCron}`, async () => {
 schedule(`0 17 * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now) && !isOutOfOffice()) {
-    await updateSlackStatus('Away', getDailyEmoji('away'), 0, true);
+    await updateSlackStatus(getStatusMessage('away', 'Away'), getDailyEmoji('away'), 0, true);
   }
 });
 
@@ -282,7 +388,7 @@ schedule(`0 17 * * ${workDaysCron}`, async () => {
 schedule(`0 12 * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now) && !isWeekend(now) && !isOutOfOffice()) {
-    await updateSlackStatus('Lunch Break', getDailyEmoji('lunch'), 60, false);
+    await updateSlackStatus(getStatusMessage('lunch', 'Lunch Break'), getDailyEmoji('lunch'), 60, false);
   }
 });
 
@@ -290,7 +396,7 @@ schedule(`0 12 * * ${workDaysCron}`, async () => {
 schedule(`0 13 * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now) && !isWeekend(now) && !isOutOfOffice()) {
-    await updateSlackStatus('Active', getDailyEmoji('active'), 0, false);
+    await updateSlackStatus(getStatusMessage('active', 'Active'), getDailyEmoji('active'), 0, false);
   }
 });
 
@@ -300,7 +406,7 @@ config.shortBreaks.forEach((breakInfo) => {
   schedule(`${minute} ${hour} * * ${workDaysCron}`, async () => {
     const now = new Date();
     if (!isHoliday(now) && !isVacation(now) && !isWeekend(now) && !isOutOfOffice()) {
-      await updateSlackStatus('Short Break', getDailyEmoji('shortBreak'), breakInfo.duration, false);
+      await updateSlackStatus(getStatusMessage('shortBreak', 'Short Break'), getDailyEmoji('shortBreak'), breakInfo.duration, false);
     }
   });
   
@@ -313,7 +419,7 @@ config.shortBreaks.forEach((breakInfo) => {
   schedule(`${returnMinute} ${returnHour} * * ${workDaysCron}`, async () => {
     const now = new Date();
     if (!isHoliday(now) && !isVacation(now) && !isWeekend(now) && !isOutOfOffice()) {
-      await updateSlackStatus('Active', getDailyEmoji('active'), 0, false);
+      await updateSlackStatus(getStatusMessage('active', 'Active'), getDailyEmoji('active'), 0, false);
     }
   });
 });
@@ -321,15 +427,27 @@ config.shortBreaks.forEach((breakInfo) => {
 // Set status for non-work days at midnight
 const nonWorkDaysCron = getNonWorkDaysCronExpression();
 schedule(`0 0 * * ${nonWorkDaysCron}`, async () => {
-  await updateSlackStatus('Away', getDailyEmoji('away'), 0, true);
+  await updateSlackStatus(getStatusMessage('weekend', 'Weekend Mode'), getDailyEmoji('away'), 0, true);
 });
 
 // Daily midnight check to reset status based on the new day
 schedule('0 0 * * *', async () => {
   const now = new Date();
   
-  if (isWeekend(now) || isHoliday(now) || isVacation(now) || isOutOfOffice()) {
-    await updateSlackStatus('Away', getDailyEmoji('away'), 0, true);
+  if (isWeekend(now)) {
+    await updateSlackStatus(getStatusMessage('weekend', 'Weekend Mode'), getDailyEmoji('away'), 0, true);
+  } else if (isHoliday(now)) {
+    const holiday = getHoliday(now);
+    await updateSlackStatus(getStatusMessage('holiday', holiday.message || 'On Holiday'), getDailyEmoji('away'), 0, true);
+  } else if (isVacation(now)) {
+    await updateSlackStatus(getStatusMessage('vacation', 'On Vacation'), getDailyEmoji('away'), 0, true);
+  } else if (isOutOfOffice()) {
+    const currentDay = format(now, 'EEEE');
+    const oooConfig = config.outOfOffice.find(ooo => 
+      ooo.day && ooo.day === currentDay
+    );
+    const message = oooConfig && oooConfig.message ? oooConfig.message : getStatusMessage('away', 'Away');
+    await updateSlackStatus(message, getDailyEmoji('away'), 0, true);
   }
 });
 

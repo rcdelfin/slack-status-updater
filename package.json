@@ -20,7 +20,11 @@
     "node-cron": "^3.0.3"
   },
   "devDependencies": {
+    "@babel/preset-typescript": "^7.27.1",
+    "@types/jest": "^29.5.14",
     "bun-types": "latest",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.3.2",
     "typescript": "^5.0.0"
   }
 }
