@@ -101,6 +101,7 @@ In the docker-compose.yml file, make sure to set the correct timezone:
 ```yaml
 environment:
   - TZ=Asia/Manila  # Change this to your timezone
+#  - SLACK_TOKEN_WORKSPACE2=${SLACK_TOKEN_WORKSPACE2} # Add this line for each additional workspace
 ```
 
 ## Running the App

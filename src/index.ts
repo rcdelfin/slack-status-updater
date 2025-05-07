@@ -367,7 +367,8 @@ initialStatusCheck();
 const workDaysCron = getWorkDaysCronExpression();
 
 // Schedule start of workday status update (work days)
-schedule(`0 9 * * ${workDaysCron}`, async () => {
+const [startHour, startMinute] = config.workHours.start.split(':').map(Number);
+schedule(`${startMinute} ${startHour} * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now) && !isOutOfOffice()) {
     await updateSlackStatus(getStatusMessage('active', 'Active'), getDailyEmoji('active'), 0, false);
@@ -377,7 +378,8 @@ schedule(`0 9 * * ${workDaysCron}`, async () => {
 });
 
 // Schedule end of workday status update (work days)
-schedule(`0 17 * * ${workDaysCron}`, async () => {
+const [endHour, endMinute] = config.workHours.end.split(':').map(Number);
+schedule(`${endMinute} ${endHour} * * ${workDaysCron}`, async () => {
   const now = new Date();
   if (!isHoliday(now) && !isVacation(now) && !isOutOfOffice()) {
     await updateSlackStatus(getStatusMessage('away', 'Away'), getDailyEmoji('away'), 0, true);
